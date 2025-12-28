@@ -1,0 +1,392 @@
+# 🚀 ADVANCED EXPLORATORY DATA ANALYSIS (EDA)
+# Dataset  : Student Performance Dataset (Sample)
+# Author   : vaishnavi
+# Purpose  : Explore structure, detect anomalies & validate patterns
+# Robust Internship-ready EDA
+# Paste this into a Jupyter Notebook cell and run
+# ------------------------------ 
+#Imports & notebook display settings
+import os
+from datetime import datetime
+from io import StringIO
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from IPython.display import display, HTML
+
+# Notebook plotting (uncomment if running inside notebook)
+# %matplotlib inline
+
+sns.set_style("whitegrid")
+plt.rcParams["figure.figsize"] = (8, 4)
+
+# 1. Output directory to collect images & files
+OUT_DIR = "eda_outputs"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+def save_fig(fig, fname, dpi=150):
+    """Save and close a matplotlib figure."""
+    path = os.path.join(OUT_DIR, fname)
+    fig.savefig(path, bbox_inches="tight", dpi=dpi)
+    plt.close(fig)
+    return path
+
+# 2. Sample dataset (replace with pd.read_csv("yourfile.csv") if you have a CSV)
+data = {
+    "Student": ["A", "B", "C", "D", "E", "F"],
+    "Math": [92, 48, 76, None, 67, 59],
+    "Physics": [85, None, 66, 55, 71, 63],
+    "Chemistry": [91, 47, None, 54, 69, 60],
+    "Attendance (%)": [96, 78, 70, 64, 82, 75]
+}
+df = pd.DataFrame(data)
+
+display(HTML("<h2>🔹 Original Dataset</h2>"))
+display(df)
+
+# 3. Describe structure: datatypes, missing, unique
+def describe_structure(df):
+    info = pd.DataFrame({
+        "Column": df.columns,
+        "Datatype": [str(t) for t in df.dtypes],
+        "MissingCount": df.isnull().sum().values,
+        "Missing%": (df.isnull().mean() * 100).round(2).values,
+        "UniqueCount": df.nunique().values
+    })
+    return info
+
+structure = describe_structure(df)
+display(HTML("<h3>🔹 Data Structure</h3>"))
+display(structure)
+
+# 4. Summary statistics
+display(HTML("<h3>🔹 Summary Statistics (numeric)</h3>"))
+display(df.describe(include="all"))
+
+# 5. Missing values: show, then impute median for numeric columns only
+display(HTML("<h3>🔹 Missing Values</h3>"))
+display(df.isnull().sum())
+
+numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()  # numeric cols only
+impute_log = []
+for col in numeric_cols:
+    med = df[col].median()
+    # fillna with assignment to avoid SettingWithCopyWarning
+    df[col] = df[col].fillna(med)
+    impute_log.append((col, med))
+
+display(HTML("<h4>✔ Imputation applied (median)</h4>"))
+display(pd.DataFrame(impute_log, columns=["Column", "MedianValue"]))
+
+# 6. Derived columns (Total, Average, Grade)
+score_cols = ["Math", "Physics", "Chemistry"]  # explicit list of score columns
+df["Total"] = df[score_cols].sum(axis=1)
+df["Average"] = (df["Total"] / len(score_cols)).round(2)
+df["Grade"] = pd.cut(df["Average"], bins=[-1,50,65,80,100], labels=["D","C","B","A"], right=True)
+
+display(HTML("<h3>🔹 Derived Features</h3>"))
+display(df[["Student"] + score_cols + ["Total","Average","Grade"]])
+
+# 7. Outlier detection (Z-score and IQR). Mark rows safely.
+z = np.abs(stats.zscore(df[score_cols]))
+z_thresh = 2.5
+z_outlier_mask = (z > z_thresh).any(axis=1)
+
+iqr_mask = np.zeros(len(df), dtype=bool)
+iqr_ranges = {}
+for col in score_cols:
+    q1 = df[col].quantile(0.25)
+    q3 = df[col].quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    mask_col = (df[col] < lower) | (df[col] > upper)
+    iqr_mask = iqr_mask | mask_col
+    iqr_ranges[col] = (lower, upper)
+
+df["Z_Outlier"] = z_outlier_mask
+df["IQR_Outlier"] = iqr_mask
+df["Any_Outlier"] = df[["Z_Outlier","IQR_Outlier"]].any(axis=1)
+
+display(HTML("<h3>🔹 Outliers (Z-score & IQR)</h3>"))
+display(df[["Student"] + score_cols + ["Z_Outlier","IQR_Outlier","Any_Outlier"]])
+
+# 8. Plots: distribution, boxplot, heatmap, attendance vs average
+for col in score_cols + ["Average"]:
+    fig, ax = plt.subplots(figsize=(7,3.5))
+    sns.histplot(df[col], kde=True, ax=ax)
+    ax.set_title(f"Distribution: {col}")
+    save_fig(fig, f"dist_{col}.png")
+
+fig, ax = plt.subplots(figsize=(7,3.5))
+sns.boxplot(data=df[score_cols], ax=ax)
+ax.set_title("Boxplot: Scores")
+save_fig(fig, "boxplot_scores.png")
+
+# correlation heatmap
+corr_cols = score_cols + ["Attendance (%)","Average"]
+corr = df[corr_cols].corr().round(3)
+fig, ax = plt.subplots(figsize=(7,4))
+sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
+ax.set_title("Correlation matrix")
+save_fig(fig, "correlation_heatmap.png")
+
+# scatter Attendance vs Average with regression
+fig, ax = plt.subplots(figsize=(7,3.5))
+if df["Attendance (%)"].nunique() > 1 and df["Average"].nunique() > 1:
+    sns.regplot(x="Attendance (%)", y="Average", data=df, lowess=True, ax=ax)
+else:
+    ax.scatter(df["Attendance (%)"], df["Average"])
+ax.set_title("Attendance vs Average")
+save_fig(fig, "attendance_vs_average.png")
+
+display(HTML("<h3>🔹 Plots saved to directory: {}</h3>".format(OUT_DIR)))
+
+# 9. Hypothesis testing: guard against empty groups
+display(HTML("<h3>🔹 Hypothesis Test: Attendance > 75 vs <= 75</h3>"))
+high_att = df[df["Attendance (%)"] > 75]["Average"]
+low_att = df[df["Attendance (%)"] <= 75]["Average"]
+if len(high_att) >= 2 and len(low_att) >= 2:  # need at least 2 samples per group for ttest_ind
+    t_stat, p_val = stats.ttest_ind(high_att, low_att, equal_var=False)
+    display(HTML(f"<p>t-statistic: {t_stat:.4f}, p-value: {p_val:.4f}</p>"))
+else:
+    display(HTML(f"<p style='color:orange'>Not enough samples in one or both groups to run a reliable t-test. High group size={len(high_att)}, Low group size={len(low_att)}</p>"))
+
+# 10. PCA example (safe)
+X = df[score_cols].values
+if X.shape[0] >= 2 and X.shape[1] >= 2:
+    X_scaled = StandardScaler().fit_transform(X)
+    pca = PCA(n_components=min(2, X_scaled.shape[1]))
+    pc = pca.fit_transform(X_scaled)
+    pca_df = pd.DataFrame(pc, columns=[f"PC{i+1}" for i in range(pc.shape[1])])
+    pca_df["Student"] = df["Student"].values
+    display(HTML("<h3>🔹 PCA on score columns</h3>"))
+    display(pca_df)
+else:
+    display(HTML("<p style='color:orange'>Not enough dimensions/samples for PCA.</p>"))
+
+# 11. Data quality checks (duplicates, ranges)
+issues = []
+if df.duplicated().any():
+    issues.append(f"Duplicates found: {df.duplicated().sum()}")
+else:
+    issues.append("No duplicates found")
+
+for col in score_cols:
+    if df[col].min() < 0 or df[col].max() > 100:
+        issues.append(f"Range issue in {col}")
+
+display(HTML("<h3>🔹 Data Quality Checks</h3>"))
+display(pd.Series(issues, name="Checks"))
+
+# 12. Save cleaned CSV and list outputs
+cleaned_csv = os.path.join(OUT_DIR, "students_cleaned.csv")
+df.to_csv(cleaned_csv, index=False)
+display(HTML(f"<h3>🔹 Cleaned CSV saved: <code>{cleaned_csv}</code></h3>"))
+
+display(HTML("<h3>🔹 End of EDA (you can open files in the 'eda_outputs' folder)</h3>"))
+
+#EDA chart code with colourful output
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from IPython.display import display, HTML
+
+# Notebook plotting mode
+# %matplotlib inline
+
+# Beautiful themes
+sns.set_style("whitegrid")
+plt.rcParams["figure.figsize"] = (9,5)
+plt.rcParams["axes.facecolor"] = "#f8f9fa"
+plt.rcParams["figure.facecolor"] = "white"
+plt.rcParams["axes.edgecolor"] = "#444"
+
+# Output folder
+os.makedirs("charts_output", exist_ok=True)
+
+
+# ============================================================
+# 1️⃣ Load Data
+# ============================================================
+data = {
+    "Student": ["A", "B", "C", "D", "E", "F"],
+    "Math": [92, 48, 76, None, 67, 59],
+    "Physics": [85, None, 66, 55, 71, 63],
+    "Chemistry": [91, 47, None, 54, 69, 60],
+    "Attendance (%)": [96, 78, 70, 64, 82, 75]
+}
+df = pd.DataFrame(data)
+
+display(HTML("<h2>📌 Original Dataset</h2>"))
+display(df)
+
+
+# ============================================================
+# 2️⃣ Data Structure
+# ============================================================
+structure = pd.DataFrame({
+    "Column": df.columns,
+    "Datatype": df.dtypes,
+    "Missing Values": df.isnull().sum(),
+    "Unique Count": df.nunique()
+})
+
+display(HTML("<h2>📌 Data Structure</h2>"))
+display(structure)
+
+
+# ============================================================
+# 3️⃣ Summary Statistics
+# ============================================================
+display(HTML("<h2>📌 Summary Statistics</h2>"))
+display(df.describe())
+
+
+# ============================================================
+# 4️⃣ Missing Value Handling
+# ============================================================
+numerics = ["Math", "Physics", "Chemistry"]
+
+for col in numerics:
+    df[col] = df[col].fillna(df[col].median())
+
+display(HTML("<h2>📌 Missing Values Filled (Median)</h2>"))
+display(df)
+
+
+# ============================================================
+# 5️⃣ UNIQUE Colorful Distribution Plots
+# ============================================================
+
+def colorful_distplot(column, palette="rainbow"):
+    fig, ax = plt.subplots()
+    sns.histplot(df[column], kde=True, palette=palette, edgecolor="black", linewidth=1.2)
+    plt.title(f"🌈 Distribution of {column}", fontsize=15, fontweight="bold")
+    plt.xlabel(column)
+    plt.ylabel("Frequency")
+    plt.grid(alpha=0.2)
+    fig.savefig(f"charts_output/dist_{column}.png", dpi=200)
+    plt.show()
+
+for col in numerics:
+    colorful_distplot(col)
+
+
+# ============================================================
+# 6️⃣ Colorful Boxplot for Outlier Detection
+# ============================================================
+fig, ax = plt.subplots()
+sns.boxplot(data=df[numerics], palette="Set2")
+plt.title("🎯 Outlier Detection (Colorful Boxplot)", fontsize=15, fontweight="bold")
+plt.grid(alpha=0.2)
+
+fig.savefig("charts_output/boxplot_outliers.png", dpi=200)
+plt.show()
+
+
+# ============================================================
+# 7️⃣ Derived Features
+# ============================================================
+df["Total"] = df[numerics].sum(axis=1)
+df["Average"] = df["Total"] / 3
+df["Grade"] = pd.cut(df["Average"], 
+                     bins=[0,50,65,80,100],
+                     labels=["D","C","B","A"])
+
+display(HTML("<h2>📌 Derived Features Added</h2>"))
+display(df)
+
+
+# ============================================================
+# 8️⃣ Colorful Correlation Heatmap
+# ============================================================
+
+fig, ax = plt.subplots()
+sns.heatmap(df[["Math","Physics","Chemistry","Attendance (%)","Average"]].corr(),
+            annot=True,
+            cmap="coolwarm",
+            linewidths=0.5,
+            cbar_kws={"shrink": 0.7})
+
+plt.title("🔥 Colorful Correlation Heatmap", fontsize=15, fontweight="bold")
+
+fig.savefig("charts_output/correlation_heatmap.png", dpi=200)
+plt.show()
+
+
+# ============================================================
+# 9️⃣ Trend: Attendance vs Performance (Color Scatter)
+# ============================================================
+fig, ax = plt.subplots()
+sns.scatterplot(
+    x=df["Attendance (%)"], 
+    y=df["Average"],
+    s=150, 
+    hue=df["Average"],
+    palette="viridis",
+    edgecolor="black"
+)
+
+plt.title("📈 Attendance vs Average (Color Trend)", fontsize=15, fontweight="bold")
+plt.xlabel("Attendance (%)")
+plt.ylabel("Average Marks")
+plt.grid(alpha=0.25)
+
+fig.savefig("charts_output/attendance_vs_avg.png", dpi=200)
+plt.show()
+
+
+# ============================================================
+# 🔟 Hypothesis Testing: Attendance Influence
+# ============================================================
+high_att = df[df["Attendance (%)"] > 75]["Average"]
+low_att = df[df["Attendance (%)"] <= 75]["Average"]
+
+t, p = stats.ttest_ind(high_att, low_att, equal_var=False)
+
+display(HTML("<h2>📌 Hypothesis Test: Attendance Effect</h2>"))
+display(pd.DataFrame({
+    "T-Statistic": [round(t,3)],
+    "P-Value": [round(p,3)]
+}))
+
+
+# ============================================================
+# 1️⃣1️⃣ PCA (Colorful)
+# ============================================================
+X = df[numerics]
+sc = StandardScaler()
+X_scaled = sc.fit_transform(X)
+
+pca = PCA(n_components=2)
+pc = pca.fit_transform(X_scaled)
+
+pca_df = pd.DataFrame(pc, columns=["PC1","PC2"])
+pca_df["Student"] = df["Student"]
+
+fig, ax = plt.subplots()
+sns.scatterplot(data=pca_df, x="PC1", y="PC2",
+                hue="Student", palette="tab10", s=140, edgecolor="black")
+
+plt.title("🌐 PCA Visualization (Colorful)", fontsize=15, fontweight="bold")
+plt.grid(alpha=0.2)
+
+fig.savefig("charts_output/pca_plot.png", dpi=200)
+plt.show()
+
+
+# ============================================================
+# 🎉 CLEAN END
+# ============================================================
+display(HTML("<h2>✨ All colorful charts saved to /charts_output folder!</h2>"))
